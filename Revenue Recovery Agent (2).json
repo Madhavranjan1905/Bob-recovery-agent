@@ -1,0 +1,430 @@
+{
+  "name": "Revenue Recovery Agent",
+  "model": "openai/gpt-5.6-terra",
+  "instructions": "# Identity\nYou are the Revenue Recovery Agent. You find revenue at risk across three sources — failed payments, abandoned checkouts, and overdue receivables — decide the right intervention for each at-risk item, and execute a bounded recovery workflow that actually moves money back, then prove how much was recovered across the batch.\n\n# Core operating loop\nFor every recovery run you: (1) DETECT at-risk items for the requested source(s); (2) TRIAGE each item to the right intervention using the intervention decision policy; (3) EXECUTE the intervention within strict bounds and stopping rules; (4) ESCALATE only when compliant and warranted; (5) LOG every action to the audit trail; (6) MEASURE and report money recovered across the whole batch. Never stop at detection — the deliverable is measured, audited recovery, not a list of problems.\n\n# Universal rules (apply to every run and every item)\n- Money is the unit of truth. Always attach a currency amount to each at-risk item and roll up recovered vs. still-at-risk totals for the batch.\n- Bounded action only. Never exceed the per-item attempt caps, contact-frequency limits, or discount/credit ceilings defined in the recovery skill. If an action would breach a bound, stop and route to escalation instead.\n- Stopping rules are hard. Stop working an item immediately when: it is recovered, the customer opts out or disputes, the attempt cap is reached, the amount is below the minimum-effort threshold, or a compliance flag is raised. Record why you stopped.\n- Compliance first. Respect opt-outs, quiet hours, jurisdiction/regulatory constraints (e.g. dunning and debt-collection rules), and required disclosures. When in doubt, do not contact — escalate to a human.\n- Every action is audited. Before and after each intervention, write an audit-trail entry (item id, source, amount, intervention, channel, outcome, timestamp, reason). No silent actions.\n- Idempotency. Do not repeat an intervention already logged for an item within its cooldown window.\n- Be explicit about uncertainty. If required data (amount, contact, consent status) is missing, mark the item as needs-review rather than acting.\n\n# Escalation routing\n- The default escalation recipient is ranjanmadhav1905@gmail.com. When sending an escalation email, leave the recipient unset to use this default, or override it only when a run explicitly names a different recipient.\n\n# Batch reporting\nEnd every run with a summary: items evaluated, interventions executed, recovered amount and count, still-at-risk amount, escalations opened, items stopped (by reason), and net measured recovery for the batch.\n\n# Boundaries\nYou run bounded, auditable recovery — you are not a general collections or marketing bot. Do not invent customer data, amounts, or consent. Use only the connected source and action systems; when a capability is not connected, say so and record the item as needs-review.",
+  "credential": "__AI_GATEWAY_MANAGED__",
+  "tools": [
+    {
+      "type": "node",
+      "name": "append_audit_log",
+      "description": "Append one immutable row to the Recovery Audit Log (append-only). Use before and after every intervention, and for every stop, escalation, or needs-review decision. Never use to edit or delete existing rows.",
+      "node": {
+        "nodeType": "n8n-nodes-base.dataTableTool",
+        "nodeTypeVersion": 1.1,
+        "nodeParameters": {
+          "resource": "row",
+          "operation": "insert",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "GPDV4gc7NDQ0rban",
+            "cachedResultName": "Recovery Audit Log"
+          },
+          "columns": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "audit_id": "={{ $fromAI('audit_id', 'Unique id for this audit entry', 'string') }}",
+              "run_id": "={{ $fromAI('run_id', 'Identifier of the recovery run/batch', 'string') }}",
+              "timestamp": "={{ $fromAI('timestamp', 'ISO 8601 timestamp of the entry', 'string') }}",
+              "item_id": "={{ $fromAI('item_id', 'At-risk item identifier (charge/cart/invoice)', 'string') }}",
+              "source": "={{ $fromAI('source', 'payment_failure | checkout_abandonment | overdue_receivable', 'string') }}",
+              "customer_id": "={{ $fromAI('customer_id', 'Customer identifier', 'string') }}",
+              "amount": "={{ $fromAI('amount', 'Amount at risk for the item', 'number') }}",
+              "currency": "={{ $fromAI('currency', 'ISO currency code', 'string') }}",
+              "phase": "={{ $fromAI('phase', 'pre_action | post_action | stopped | escalated | needs_review', 'string') }}",
+              "intervention": "={{ $fromAI('intervention', 'Intervention type, e.g. SMART_RETRY, CARD_UPDATE_REQUEST, REMINDER, DUNNING_STEP, ESCALATE', 'string') }}",
+              "channel": "={{ $fromAI('channel', 'Channel used, e.g. email, sms, retry, ticket', 'string') }}",
+              "outcome": "={{ $fromAI('outcome', 'succeeded | sent | failed | bounced | declined | not_executed', 'string') }}",
+              "recovered_amount": "={{ $fromAI('recovered_amount', 'Settlement-confirmed recovered amount, 0 if none', 'number') }}",
+              "attempt_number": "={{ $fromAI('attempt_number', 'Cumulative attempt count for the item', 'number') }}",
+              "stop_reason": "={{ $fromAI('stop_reason', 'Reason if stopped/escalated, e.g. below_threshold, opt_out, dispute, attempt_cap, compliance_flag; empty if none', 'string') }}",
+              "notes": "={{ $fromAI('notes', 'Free-text context', 'string') }}"
+            },
+            "schema": [
+              {
+                "id": "audit_id",
+                "displayName": "audit_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "run_id",
+                "displayName": "run_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "timestamp",
+                "displayName": "timestamp",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "item_id",
+                "displayName": "item_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "source",
+                "displayName": "source",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "customer_id",
+                "displayName": "customer_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "amount",
+                "displayName": "amount",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "number",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "currency",
+                "displayName": "currency",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "phase",
+                "displayName": "phase",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "intervention",
+                "displayName": "intervention",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "channel",
+                "displayName": "channel",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "outcome",
+                "displayName": "outcome",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "recovered_amount",
+                "displayName": "recovered_amount",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "number",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "attempt_number",
+                "displayName": "attempt_number",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "number",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "stop_reason",
+                "displayName": "stop_reason",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "notes",
+                "displayName": "notes",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "type": "string",
+                "canBeUsedToMatch": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "node",
+      "name": "query_audit_log",
+      "description": "Read rows from the Recovery Audit Log to check an item's prior attempts/cooldowns/opt-outs and to aggregate a run's entries for batch recovery measurement. Filter by run_id, item_id, source, or phase. Read-only.",
+      "node": {
+        "nodeType": "n8n-nodes-base.dataTableTool",
+        "nodeTypeVersion": 1.1,
+        "nodeParameters": {
+          "resource": "row",
+          "operation": "get",
+          "dataTableId": {
+            "__rl": true,
+            "mode": "id",
+            "value": "GPDV4gc7NDQ0rban",
+            "cachedResultName": "Recovery Audit Log"
+          },
+          "matchType": "allConditions",
+          "filters": {
+            "conditions": [
+              {
+                "keyName": "run_id",
+                "condition": "eq",
+                "keyValue": "={{ $fromAI('run_id', 'Run/batch id to filter audit entries by', 'string') }}"
+              }
+            ]
+          },
+          "returnAll": true
+        }
+      }
+    },
+    {
+      "type": "node",
+      "name": "send_escalation_email",
+      "description": "Send a compliant revenue-recovery escalation or human-handoff email via Gmail. Use ONLY when the Compliant Escalation skill warrants it (attempt cap reached, dispute/opt-out, compliance flag, high-value needs-review). Respect quiet hours and required disclosures. Always write an 'escalated' audit-log row for the item before or after sending.",
+      "node": {
+        "nodeType": "n8n-nodes-base.gmailTool",
+        "nodeTypeVersion": 2.2,
+        "nodeParameters": {
+          "resource": "message",
+          "operation": "send",
+          "sendTo": "={{ $fromAI('sendTo', 'Recipient email address(es) for the escalation, comma-separated. Leave empty to use the default escalation inbox.', 'string') || 'ranjanmadhav1905@gmail.com' }}",
+          "subject": "={{ $fromAI('subject', 'Concise escalation subject including item id and amount at risk', 'string') }}",
+          "emailType": "text",
+          "message": "={{ $fromAI('message', 'Full escalation body: item id, source, customer, amount and currency, attempts made, stop reason, and recommended human action', 'string') }}",
+          "options": {}
+        },
+        "credentials": {
+          "gmailOAuth2": {
+            "id": "DOEyotByOobwafQQ",
+            "name": "Gmail account"
+          }
+        }
+      },
+      "requireApproval": true
+    },
+    {
+      "type": "node",
+      "name": "braintree_detect_failed_payments",
+      "description": "Detect declined/failed Braintree transactions (payment failures) by POSTing a GraphQL query. Use during the detect phase for the payment_failure source. Provide the GraphQL query and variables to search transactions by status/date range. Read-only detection; do not use to charge.",
+      "node": {
+        "nodeType": "n8n-nodes-base.httpRequestTool",
+        "nodeTypeVersion": 4.5,
+        "nodeParameters": {
+          "method": "POST",
+          "url": "https://payments.braintree-api.com/graphql",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Braintree-Version",
+                "value": "2019-01-01"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"query\": $fromAI('graphql_query', 'The Braintree GraphQL query string to find declined or failed transactions', 'string'), \"variables\": $fromAI('variables', 'GraphQL variables object for the query (e.g. status filters, date range)', 'json') } }}"
+        }
+      }
+    },
+    {
+      "type": "node",
+      "name": "braintree_retry_charge",
+      "description": "Execute a Braintree recovery charge/retry by POSTing a GraphQL mutation (e.g. chargePaymentMethod). Use during the execute phase for payment_failure items, within retry caps. Requires the GraphQL mutation and variables. Always log a pre_action and post_action audit row around this call.",
+      "node": {
+        "nodeType": "n8n-nodes-base.httpRequestTool",
+        "nodeTypeVersion": 4.5,
+        "nodeParameters": {
+          "method": "POST",
+          "url": "https://payments.braintree-api.com/graphql",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Braintree-Version",
+                "value": "2019-01-01"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"query\": $fromAI('graphql_mutation', 'The Braintree GraphQL mutation string to retry/re-charge a payment method', 'string'), \"variables\": $fromAI('variables', 'GraphQL variables object for the mutation (payment method / amount / idempotency key)', 'json') } }}"
+        }
+      },
+      "requireApproval": true
+    },
+    {
+      "type": "node",
+      "name": "razorpay_detect_unpaid_orders",
+      "description": "Detect Razorpay orders that were created but not paid (checkout abandonment) via GET /v1/orders. Use during the detect phase for the checkout_abandonment source. Pass query filters such as count, skip, from, to, and authorized status. Read-only detection.",
+      "node": {
+        "nodeType": "n8n-nodes-base.httpRequestTool",
+        "nodeTypeVersion": 4.5,
+        "nodeParameters": {
+          "method": "GET",
+          "url": "https://api.razorpay.com/v1/orders",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "sendQuery": true,
+          "specifyQuery": "json",
+          "jsonQuery": "={{ $fromAI('query', 'Razorpay orders query params object, e.g. { count, skip, from, to, authorized }', 'json') }}"
+        }
+      }
+    },
+    {
+      "type": "node",
+      "name": "razorpay_detect_failed_payments",
+      "description": "Detect failed Razorpay payments (checkout abandonment / payment failure) via GET /v1/payments. Use during the detect phase for the checkout_abandonment source. Pass query filters such as count, skip, from, to. Read-only detection.",
+      "node": {
+        "nodeType": "n8n-nodes-base.httpRequestTool",
+        "nodeTypeVersion": 4.5,
+        "nodeParameters": {
+          "method": "GET",
+          "url": "https://api.razorpay.com/v1/payments",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "sendQuery": true,
+          "specifyQuery": "json",
+          "jsonQuery": "={{ $fromAI('query', 'Razorpay payments query params object, e.g. { count, skip, from, to }', 'json') }}"
+        }
+      }
+    },
+    {
+      "type": "node",
+      "name": "razorpay_send_payment_link",
+      "description": "Execute a Razorpay recovery action by creating a payment link via POST /v1/payment_links to prompt the customer to complete payment. Use during the execute phase for checkout_abandonment items, within reminder caps. Provide the payment-link body (amount, currency, customer, description, reminder settings). Always log pre_action and post_action audit rows.",
+      "node": {
+        "nodeType": "n8n-nodes-base.httpRequestTool",
+        "nodeTypeVersion": 4.5,
+        "nodeParameters": {
+          "method": "POST",
+          "url": "https://api.razorpay.com/v1/payment_links",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ $fromAI('body', 'Razorpay payment_links request body object: amount (in smallest currency unit), currency, description, customer (name/email/contact), notify, reminder_enable', 'json') }}"
+        }
+      },
+      "requireApproval": true
+    }
+  ],
+  "skills": [
+    {
+      "type": "skill",
+      "id": "skill_Ahfsmc6nkC9Q7nXJ"
+    },
+    {
+      "type": "skill",
+      "id": "skill_FhcpkrC4jT1NWqQf"
+    },
+    {
+      "type": "skill",
+      "id": "skill_l4PS3i72maTSlrsh"
+    },
+    {
+      "type": "skill",
+      "id": "skill_Xsy9reqjidOkSfVn"
+    },
+    {
+      "type": "skill",
+      "id": "skill_b9Mb8MTj1Aj2SRs2"
+    },
+    {
+      "type": "skill",
+      "id": "skill_SBGdcjrfUY1C9pv0"
+    },
+    {
+      "type": "skill",
+      "id": "skill_GXMFBKs2MSmMz0Nf"
+    },
+    {
+      "type": "skill",
+      "id": "skill_BcMeamlp6CyYkdYn"
+    }
+  ],
+  "personalisation": {
+    "icon": "bot",
+    "gradient": {
+      "from": "#E44F52",
+      "to": "#00BFD3",
+      "angle": 69,
+      "fromStop": 0,
+      "toStop": 89
+    }
+  },
+  "memory": {
+    "enabled": true,
+    "storage": "n8n",
+    "observationalMemory": {
+      "enabled": true
+    }
+  },
+  "providerTools": {
+    "openai.web_search": {
+      "externalWebAccess": true,
+      "searchContextSize": "medium"
+    }
+  },
+  "config": {
+    "promptCaching": {
+      "enabled": true
+    },
+    "webSearch": {
+      "enabled": true
+    }
+  },
+  "integrations": []
+}
